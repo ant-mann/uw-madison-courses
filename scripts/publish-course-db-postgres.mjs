@@ -74,7 +74,7 @@ const COURSE_IDENTITY_COLUMNS = [
 
 const COURSE_STAGING_DROP_TABLES = [...COURSE_SWAP_TRUNCATE_TABLES.slice(1), 'course_search_fts'];
 const COURSE_RUNTIME_INDEX_QUERIES = [
-  `CREATE INDEX IF NOT EXISTS idx_schedulable_packages_course_sort
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_schedulable_packages_course_sort
    ON schedulable_packages(term_code, course_id, is_full, campus_day_count, earliest_start_minute_local, source_package_id)`,
 ];
 const COURSE_SEARCH_FTS_COLUMNS = [
