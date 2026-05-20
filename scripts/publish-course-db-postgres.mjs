@@ -73,6 +73,10 @@ const COURSE_IDENTITY_COLUMNS = [
 ];
 
 const COURSE_STAGING_DROP_TABLES = [...COURSE_SWAP_TRUNCATE_TABLES.slice(1), 'course_search_fts'];
+const COURSE_RUNTIME_INDEX_QUERIES = [
+  `CREATE INDEX IF NOT EXISTS idx_schedulable_packages_course_sort
+   ON schedulable_packages(term_code, course_id, is_full, campus_day_count, earliest_start_minute_local, source_package_id)`,
+];
 const COURSE_SEARCH_FTS_COLUMNS = [
   'term_code',
   'course_id',
@@ -186,6 +190,16 @@ async function syncCourseIdentitySequences(sql) {
     await sql.unsafe(
       `SELECT setval(pg_get_serial_sequence('public.${tableName}', '${columnName}'), COALESCE(MAX(${escapePostgresIdentifier(columnName)}), 1), MAX(${escapePostgresIdentifier(columnName)}) IS NOT NULL) FROM ${qualifyPublicIdentifier(tableName)}`,
     );
+  }
+}
+
+async function disableStatementTimeout(sql) {
+  await sql.unsafe('SET statement_timeout = 0');
+}
+
+async function ensureCourseRuntimeIndexes(sql) {
+  for (const query of COURSE_RUNTIME_INDEX_QUERIES) {
+    await sql.unsafe(query);
   }
 }
 
@@ -321,6 +335,9 @@ export async function publishCourseDbPostgres({
       const schemaSql = await readFile(COURSE_SCHEMA_PATH, 'utf8');
       await sql.unsafe(schemaSql).simple();
     }
+
+    await disableStatementTimeout(sql);
+    await ensureCourseRuntimeIndexes(sql);
 
     await dropCourseStagingTables(sql);
     await createCourseStagingTables(sql);

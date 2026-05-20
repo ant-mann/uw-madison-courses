@@ -453,6 +453,16 @@ function createPostgresRecorder({
         return Promise.resolve([schemaExistsRow]);
       }
 
+      if (query === 'SET statement_timeout = 0') {
+        record('statement-timeout-disabled');
+        return Promise.resolve([]);
+      }
+
+      if (query.startsWith('CREATE INDEX IF NOT EXISTS idx_schedulable_packages_course_sort')) {
+        record('ensure-index:idx_schedulable_packages_course_sort');
+        return Promise.resolve([]);
+      }
+
       if (query.startsWith('INSERT INTO public."course_search_fts_staging"')) {
         assert.equal(parameters.length, 10);
         record('load:public.course_search_fts_staging');
@@ -1216,6 +1226,11 @@ test('publishCourseDbPostgres resets imported identity sequences after swap', as
     assert.ok(sequenceSyncIndex > recorder.events.indexOf('swap:public.course_search_fts'));
     assert.ok(sequenceSyncIndex < recorder.events.lastIndexOf('drop:public.schedulable_packages_staging'));
     assert.ok(sequenceSyncIndex < recorder.events.indexOf('end'));
+    assert.ok(recorder.events.indexOf('statement-timeout-disabled') > recorder.events.indexOf('bootstrap-check'));
+    assert.ok(
+      recorder.events.indexOf('ensure-index:idx_schedulable_packages_course_sort')
+        > recorder.events.indexOf('statement-timeout-disabled'),
+    );
   } finally {
     await fixture.cleanup();
   }
