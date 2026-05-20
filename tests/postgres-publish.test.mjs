@@ -176,8 +176,11 @@ function createCourseSchemaStubSql({ schemaExistsRow, stopMessage, onBootstrapAp
     throw new Error('sql.begin should not be called in this test');
   };
   sql.reserve = async () => {
-    sql.release = () => {};
-    return sql;
+    const reserved = (...args) => sql(...args);
+    reserved.unsafe = (...args) => sql.unsafe(...args);
+    reserved.begin = (...args) => sql.begin(...args);
+    reserved.release = () => {};
+    return reserved;
   };
   sql.end = async () => {};
 
@@ -513,8 +516,11 @@ function createPostgresRecorder({
     };
 
     sql.reserve = async () => {
-      sql.release = () => {};
-      return sql;
+      const reserved = (...args) => sql(...args);
+      reserved.unsafe = (...args) => sql.unsafe(...args);
+      reserved.begin = (...args) => sql.begin(...args);
+      reserved.release = () => {};
+      return reserved;
     };
 
     sql.end = async (options) => {
