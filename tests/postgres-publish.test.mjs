@@ -175,6 +175,10 @@ function createCourseSchemaStubSql({ schemaExistsRow, stopMessage, onBootstrapAp
   sql.begin = async () => {
     throw new Error('sql.begin should not be called in this test');
   };
+  sql.reserve = async () => {
+    sql.release = () => {};
+    return sql;
+  };
   sql.end = async () => {};
 
   return sql;
@@ -458,7 +462,7 @@ function createPostgresRecorder({
         return Promise.resolve([]);
       }
 
-      if (query.startsWith('CREATE INDEX IF NOT EXISTS idx_schedulable_packages_course_sort')) {
+      if (query.startsWith('CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_schedulable_packages_course_sort')) {
         record('ensure-index:idx_schedulable_packages_course_sort');
         return Promise.resolve([]);
       }
@@ -506,6 +510,11 @@ function createPostgresRecorder({
       } finally {
         insideTransaction = false;
       }
+    };
+
+    sql.reserve = async () => {
+      sql.release = () => {};
+      return sql;
     };
 
     sql.end = async (options) => {
@@ -936,6 +945,9 @@ test('publishCourseDbPostgres closes the SQL client if SQLite initialization fai
       sqlitePath: path.join(repoRoot, 'data', 'does-not-exist.sqlite'),
       sqlFactory() {
         return {
+          async reserve() {
+            return { release() {} };
+          },
           async end(options) {
             endCallCount += 1;
             assert.deepEqual(options, { timeout: 0 });
@@ -961,6 +973,9 @@ test('publishCourseDbPostgres preserves the original publish failure when sql.en
       sqlitePath: path.join(repoRoot, 'data', 'does-not-exist.sqlite'),
       sqlFactory() {
         return {
+          async reserve() {
+            return { release() {} };
+          },
           async end(options) {
             assert.deepEqual(options, { timeout: 0 });
             throw endError;

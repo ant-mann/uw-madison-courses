@@ -318,14 +318,16 @@ export async function publishCourseDbPostgres({
   const normalizedSqliteBatchSize = normalizeSqliteBatchSize(sqliteBatchSize);
   const databaseUrl = requireEnv(env, 'SUPABASE_DATABASE_URL');
   let sql;
+  let reserved;
   let sqlite;
   let originalError;
 
   try {
     sql = sqlFactory(databaseUrl);
+    reserved = await sql.reserve();
     sqlite = new Database(sqlitePath, { readonly: true, fileMustExist: true });
 
-    const schemaState = await getCourseSchemaState(sql);
+    const schemaState = await getCourseSchemaState(reserved);
 
     if (schemaState === 'partial') {
       throw new Error('Refusing to bootstrap partially provisioned course schema');
@@ -333,39 +335,39 @@ export async function publishCourseDbPostgres({
 
     if (schemaState === 'missing') {
       const schemaSql = await readFile(COURSE_SCHEMA_PATH, 'utf8');
-      await sql.unsafe(schemaSql).simple();
+      await reserved.unsafe(schemaSql).simple();
     }
 
-    await disableStatementTimeout(sql);
-    await ensureCourseRuntimeIndexes(sql);
+    await disableStatementTimeout(reserved);
+    await ensureCourseRuntimeIndexes(reserved);
 
-    await dropCourseStagingTables(sql);
-    await createCourseStagingTables(sql);
+    await dropCourseStagingTables(reserved);
+    await createCourseStagingTables(reserved);
 
     for (const tableName of COURSE_IMPORT_TABLES) {
       if (tableName === 'course_search_fts') {
         continue;
       }
 
-      await loadSqliteTableIntoStage({ sqlite, sql, tableName, sqliteBatchSize: normalizedSqliteBatchSize });
+      await loadSqliteTableIntoStage({ sqlite, sql: reserved, tableName, sqliteBatchSize: normalizedSqliteBatchSize });
     }
 
-    await loadCourseSearchFtsIntoStage({ sqlite, sql, sqliteBatchSize: normalizedSqliteBatchSize });
+    await loadCourseSearchFtsIntoStage({ sqlite, sql: reserved, sqliteBatchSize: normalizedSqliteBatchSize });
     await validateRowCounts({
       sqlite,
-      sql: makeStageCountSql(sql),
+      sql: makeStageCountSql(reserved),
       tables: COURSE_IMPORT_TABLES,
     });
-    await makeSwapSql(sql);
-    await dropCourseStagingTables(sql);
+    await makeSwapSql(reserved);
+    await dropCourseStagingTables(reserved);
 
     return undefined;
   } catch (error) {
     originalError = error;
 
-    if (sql) {
+    if (reserved) {
       try {
-        await dropCourseStagingTables(sql);
+        await dropCourseStagingTables(reserved);
       } catch {
         // Preserve the original publish failure if staging cleanup also fails.
       }
@@ -374,6 +376,16 @@ export async function publishCourseDbPostgres({
     throw error;
   } finally {
     sqlite?.close();
+
+    if (reserved) {
+      try {
+        reserved.release();
+      } catch (error) {
+        if (!originalError) {
+          throw error;
+        }
+      }
+    }
 
     if (sql) {
       try {
