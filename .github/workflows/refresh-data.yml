@@ -37,3 +37,4 @@ jobs:
         run: pnpm run publish:course-db:postgres
         env:
           SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+          SQLITE_BATCH_SIZE: "250"

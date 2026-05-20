@@ -175,6 +175,13 @@ function createCourseSchemaStubSql({ schemaExistsRow, stopMessage, onBootstrapAp
   sql.begin = async () => {
     throw new Error('sql.begin should not be called in this test');
   };
+  sql.reserve = async () => {
+    const reserved = (...args) => sql(...args);
+    reserved.unsafe = (...args) => sql.unsafe(...args);
+    reserved.begin = (...args) => sql.begin(...args);
+    reserved.release = () => {};
+    return reserved;
+  };
   sql.end = async () => {};
 
   return sql;
@@ -453,6 +460,16 @@ function createPostgresRecorder({
         return Promise.resolve([schemaExistsRow]);
       }
 
+      if (query === 'SET statement_timeout = 0') {
+        record('statement-timeout-disabled');
+        return Promise.resolve([]);
+      }
+
+      if (query.startsWith('CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_schedulable_packages_course_sort')) {
+        record('ensure-index:idx_schedulable_packages_course_sort');
+        return Promise.resolve([]);
+      }
+
       if (query.startsWith('INSERT INTO public."course_search_fts_staging"')) {
         assert.equal(parameters.length, 10);
         record('load:public.course_search_fts_staging');
@@ -496,6 +513,14 @@ function createPostgresRecorder({
       } finally {
         insideTransaction = false;
       }
+    };
+
+    sql.reserve = async () => {
+      const reserved = (...args) => sql(...args);
+      reserved.unsafe = (...args) => sql.unsafe(...args);
+      reserved.begin = (...args) => sql.begin(...args);
+      reserved.release = () => {};
+      return reserved;
     };
 
     sql.end = async (options) => {
@@ -926,6 +951,9 @@ test('publishCourseDbPostgres closes the SQL client if SQLite initialization fai
       sqlitePath: path.join(repoRoot, 'data', 'does-not-exist.sqlite'),
       sqlFactory() {
         return {
+          async reserve() {
+            return { release() {} };
+          },
           async end(options) {
             endCallCount += 1;
             assert.deepEqual(options, { timeout: 0 });
@@ -951,6 +979,9 @@ test('publishCourseDbPostgres preserves the original publish failure when sql.en
       sqlitePath: path.join(repoRoot, 'data', 'does-not-exist.sqlite'),
       sqlFactory() {
         return {
+          async reserve() {
+            return { release() {} };
+          },
           async end(options) {
             assert.deepEqual(options, { timeout: 0 });
             throw endError;
@@ -1216,6 +1247,11 @@ test('publishCourseDbPostgres resets imported identity sequences after swap', as
     assert.ok(sequenceSyncIndex > recorder.events.indexOf('swap:public.course_search_fts'));
     assert.ok(sequenceSyncIndex < recorder.events.lastIndexOf('drop:public.schedulable_packages_staging'));
     assert.ok(sequenceSyncIndex < recorder.events.indexOf('end'));
+    assert.ok(recorder.events.indexOf('statement-timeout-disabled') > recorder.events.indexOf('bootstrap-check'));
+    assert.ok(
+      recorder.events.indexOf('ensure-index:idx_schedulable_packages_course_sort')
+        > recorder.events.indexOf('statement-timeout-disabled'),
+    );
   } finally {
     await fixture.cleanup();
   }

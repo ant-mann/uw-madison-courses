@@ -73,6 +73,10 @@ const COURSE_IDENTITY_COLUMNS = [
 ];
 
 const COURSE_STAGING_DROP_TABLES = [...COURSE_SWAP_TRUNCATE_TABLES.slice(1), 'course_search_fts'];
+const COURSE_RUNTIME_INDEX_QUERIES = [
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_schedulable_packages_course_sort
+   ON schedulable_packages(term_code, course_id, is_full, campus_day_count, earliest_start_minute_local, source_package_id)`,
+];
 const COURSE_SEARCH_FTS_COLUMNS = [
   'term_code',
   'course_id',
@@ -186,6 +190,16 @@ async function syncCourseIdentitySequences(sql) {
     await sql.unsafe(
       `SELECT setval(pg_get_serial_sequence('public.${tableName}', '${columnName}'), COALESCE(MAX(${escapePostgresIdentifier(columnName)}), 1), MAX(${escapePostgresIdentifier(columnName)}) IS NOT NULL) FROM ${qualifyPublicIdentifier(tableName)}`,
     );
+  }
+}
+
+async function disableStatementTimeout(sql) {
+  await sql.unsafe('SET statement_timeout = 0');
+}
+
+async function ensureCourseRuntimeIndexes(sql) {
+  for (const query of COURSE_RUNTIME_INDEX_QUERIES) {
+    await sql.unsafe(query);
   }
 }
 
@@ -304,14 +318,16 @@ export async function publishCourseDbPostgres({
   const normalizedSqliteBatchSize = normalizeSqliteBatchSize(sqliteBatchSize);
   const databaseUrl = requireEnv(env, 'SUPABASE_DATABASE_URL');
   let sql;
+  let reserved;
   let sqlite;
   let originalError;
 
   try {
     sql = sqlFactory(databaseUrl);
+    reserved = await sql.reserve();
     sqlite = new Database(sqlitePath, { readonly: true, fileMustExist: true });
 
-    const schemaState = await getCourseSchemaState(sql);
+    const schemaState = await getCourseSchemaState(reserved);
 
     if (schemaState === 'partial') {
       throw new Error('Refusing to bootstrap partially provisioned course schema');
@@ -319,36 +335,39 @@ export async function publishCourseDbPostgres({
 
     if (schemaState === 'missing') {
       const schemaSql = await readFile(COURSE_SCHEMA_PATH, 'utf8');
-      await sql.unsafe(schemaSql).simple();
+      await reserved.unsafe(schemaSql).simple();
     }
 
-    await dropCourseStagingTables(sql);
-    await createCourseStagingTables(sql);
+    await disableStatementTimeout(reserved);
+    await ensureCourseRuntimeIndexes(reserved);
+
+    await dropCourseStagingTables(reserved);
+    await createCourseStagingTables(reserved);
 
     for (const tableName of COURSE_IMPORT_TABLES) {
       if (tableName === 'course_search_fts') {
         continue;
       }
 
-      await loadSqliteTableIntoStage({ sqlite, sql, tableName, sqliteBatchSize: normalizedSqliteBatchSize });
+      await loadSqliteTableIntoStage({ sqlite, sql: reserved, tableName, sqliteBatchSize: normalizedSqliteBatchSize });
     }
 
-    await loadCourseSearchFtsIntoStage({ sqlite, sql, sqliteBatchSize: normalizedSqliteBatchSize });
+    await loadCourseSearchFtsIntoStage({ sqlite, sql: reserved, sqliteBatchSize: normalizedSqliteBatchSize });
     await validateRowCounts({
       sqlite,
-      sql: makeStageCountSql(sql),
+      sql: makeStageCountSql(reserved),
       tables: COURSE_IMPORT_TABLES,
     });
-    await makeSwapSql(sql);
-    await dropCourseStagingTables(sql);
+    await makeSwapSql(reserved);
+    await dropCourseStagingTables(reserved);
 
     return undefined;
   } catch (error) {
     originalError = error;
 
-    if (sql) {
+    if (reserved) {
       try {
-        await dropCourseStagingTables(sql);
+        await dropCourseStagingTables(reserved);
       } catch {
         // Preserve the original publish failure if staging cleanup also fails.
       }
@@ -357,6 +376,16 @@ export async function publishCourseDbPostgres({
     throw error;
   } finally {
     sqlite?.close();
+
+    if (reserved) {
+      try {
+        reserved.release();
+      } catch (error) {
+        if (!originalError) {
+          throw error;
+        }
+      }
+    }
 
     if (sql) {
       try {
