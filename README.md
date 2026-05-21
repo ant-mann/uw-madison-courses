@@ -151,15 +151,20 @@ pnpm run publish:course-db:postgres
 pnpm run publish:madgrades-db:postgres
 ```
 
-These scripts require `SUPABASE_DATABASE_URL` and are for loading the hosted Postgres database from the local SQLite artifacts. The deployed web runtime is configured separately in the deployment section below. In remote verification, the reachable Supabase pooler connections enforced a `2min` statement timeout, so the imports only completed reliably with a smaller SQLite batch size override:
+These scripts require an importer database URL and are for loading the hosted Postgres database from the local SQLite artifacts. The deployed web runtime is configured separately in the deployment section below.
+
+- Prefer `SUPABASE_DIRECT_DATABASE_URL` for bulk imports (direct connection, no session pool checkout contention).
+- `SUPABASE_DATABASE_URL` remains a backward-compatible fallback for local runs.
+
+`SQLITE_BATCH_SIZE` is optional and defaults to `250`. Lower it for constrained environments if needed:
 
 ```bash
-SUPABASE_DATABASE_URL='postgresql://<user>:<password>@aws-1-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require' \
-SQLITE_BATCH_SIZE=50 \
+SUPABASE_DIRECT_DATABASE_URL='postgresql://<user>:<password>@<project-ref>.supabase.co:5432/postgres?sslmode=require' \
+SQLITE_BATCH_SIZE=100 \
 node scripts/publish-course-db-postgres.mjs
 
-SUPABASE_DATABASE_URL='postgresql://<user>:<password>@aws-1-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require' \
-SQLITE_BATCH_SIZE=50 \
+SUPABASE_DIRECT_DATABASE_URL='postgresql://<user>:<password>@<project-ref>.supabase.co:5432/postgres?sslmode=require' \
+SQLITE_BATCH_SIZE=100 \
 node scripts/publish-madgrades-db-postgres.mjs
 ```
 

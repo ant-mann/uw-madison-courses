@@ -9,7 +9,7 @@ import postgres from 'postgres';
 const __filename = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(__filename), '..');
 const COURSE_SCHEMA_PATH = path.join(repoRoot, 'scripts', 'schema-postgres.sql');
-const SQLITE_BATCH_SIZE = 1000;
+const SQLITE_BATCH_SIZE = 250;
 
 export const COURSE_IMPORT_TABLES = [
   'refresh_runs',
@@ -111,6 +111,22 @@ export function requireEnv(env, name) {
   }
 
   return value;
+}
+
+export function resolveImporterDatabaseUrl(env) {
+  const directDatabaseUrl = env.SUPABASE_DIRECT_DATABASE_URL;
+
+  if (directDatabaseUrl) {
+    return directDatabaseUrl;
+  }
+
+  const pooledDatabaseUrl = env.SUPABASE_DATABASE_URL;
+
+  if (pooledDatabaseUrl) {
+    return pooledDatabaseUrl;
+  }
+
+  throw new Error('Missing SUPABASE_DIRECT_DATABASE_URL or SUPABASE_DATABASE_URL');
 }
 
 function normalizeSqliteBatchSize(sqliteBatchSize) {
@@ -329,7 +345,7 @@ export async function publishCourseDbPostgres({
   sqlFactory = postgres,
 } = {}) {
   const normalizedSqliteBatchSize = normalizeSqliteBatchSize(sqliteBatchSize);
-  const databaseUrl = requireEnv(env, 'SUPABASE_DATABASE_URL');
+  const databaseUrl = resolveImporterDatabaseUrl(env);
   let sql;
   let reserved;
   let sqlite;

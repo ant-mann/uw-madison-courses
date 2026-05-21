@@ -948,7 +948,7 @@ test('courseBootstrapSchemaNeeded returns true when every required course table 
   assert.equal(await courseBootstrapSchemaNeeded(sql), true);
 });
 
-test('publishCourseDbPostgres rejects when SUPABASE_DATABASE_URL is missing', async () => {
+test('publishCourseDbPostgres rejects when neither importer Postgres URL is set', async () => {
   const { publishCourseDbPostgres } = await import(courseImporterPath);
 
   await assert.rejects(
@@ -958,8 +958,35 @@ test('publishCourseDbPostgres rejects when SUPABASE_DATABASE_URL is missing', as
         throw new Error('sqlFactory should not be called');
       },
     }),
-    /Missing SUPABASE_DATABASE_URL/,
+    /Missing SUPABASE_DIRECT_DATABASE_URL or SUPABASE_DATABASE_URL/,
   );
+});
+
+test('publishCourseDbPostgres prefers SUPABASE_DIRECT_DATABASE_URL when both importer URLs are set', async () => {
+  const { publishCourseDbPostgres } = await import(courseImporterPath);
+  let capturedDatabaseUrl;
+
+  await assert.rejects(
+    publishCourseDbPostgres({
+      env: {
+        SUPABASE_DIRECT_DATABASE_URL: 'postgres://direct.example/db',
+        SUPABASE_DATABASE_URL: 'postgres://pooler.example/db',
+      },
+      sqlitePath: path.join(repoRoot, 'data', 'does-not-exist.sqlite'),
+      sqlFactory(databaseUrl) {
+        capturedDatabaseUrl = databaseUrl;
+        return {
+          async reserve() {
+            return { release() {} };
+          },
+          async end() {},
+        };
+      },
+    }),
+    /unable to open database file/,
+  );
+
+  assert.equal(capturedDatabaseUrl, 'postgres://direct.example/db');
 });
 
 test('publishCourseDbPostgres closes the SQL client if SQLite initialization fails', async () => {
@@ -1507,7 +1534,7 @@ test('publishCourseDbPostgres attempts staging cleanup after swap failure and pr
   }
 });
 
-test('publish-madgrades-db-postgres exposes the Madgrades import order and requires SUPABASE_DATABASE_URL', async () => {
+test('publish-madgrades-db-postgres exposes the Madgrades import order and requires an importer Postgres URL', async () => {
   const { MADGRADES_IMPORT_TABLES, publishMadgradesDbPostgres } = await import(madgradesImporterPath);
 
   assert.deepEqual(MADGRADES_IMPORT_TABLES, expectedMadgradesImportTables);
@@ -1518,8 +1545,35 @@ test('publish-madgrades-db-postgres exposes the Madgrades import order and requi
         throw new Error('should not connect');
       },
     }),
-    /Missing SUPABASE_DATABASE_URL/,
+    /Missing SUPABASE_DIRECT_DATABASE_URL or SUPABASE_DATABASE_URL/,
   );
+});
+
+test('publishMadgradesDbPostgres prefers SUPABASE_DIRECT_DATABASE_URL when both importer URLs are set', async () => {
+  const { publishMadgradesDbPostgres } = await import(madgradesImporterPath);
+  const fixture = await createMadgradesSqliteFixture();
+  let capturedDatabaseUrl;
+
+  try {
+    await assert.rejects(
+      publishMadgradesDbPostgres({
+        env: {
+          SUPABASE_DIRECT_DATABASE_URL: 'postgres://direct.example/db',
+          SUPABASE_DATABASE_URL: 'postgres://pooler.example/db',
+        },
+        sqlitePath: fixture.sqlitePath,
+        sqlFactory(databaseUrl) {
+          capturedDatabaseUrl = databaseUrl;
+          throw new Error('stop after URL selection');
+        },
+      }),
+      /stop after URL selection/,
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+
+  assert.equal(capturedDatabaseUrl, 'postgres://direct.example/db');
 });
 
 test('publishMadgradesDbPostgres wraps bootstrap schema application in a transaction so failures rollback cleanly', async () => {
