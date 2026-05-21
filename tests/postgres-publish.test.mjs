@@ -309,6 +309,7 @@ function createPostgresRecorder({
   cleanupError,
   rejectTemplateCreateStatements = false,
   rejectTemplateUnsafeIdentifierFragments = false,
+  throwOnBeginCall = false,
 }) {
   const events = [];
   let dropCallCount = 0;
@@ -465,6 +466,22 @@ function createPostgresRecorder({
         return Promise.resolve([]);
       }
 
+      if (query === 'BEGIN') {
+        record('swap-begin');
+        insideTransaction = true;
+        return Promise.resolve([]);
+      }
+
+      if (query === 'COMMIT') {
+        insideTransaction = false;
+        return Promise.resolve([]);
+      }
+
+      if (query === 'ROLLBACK') {
+        insideTransaction = false;
+        return Promise.resolve([]);
+      }
+
       if (query.startsWith('CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_schedulable_packages_course_sort')) {
         record('ensure-index:idx_schedulable_packages_course_sort');
         return Promise.resolve([]);
@@ -505,6 +522,10 @@ function createPostgresRecorder({
     };
 
     sql.begin = async (callback) => {
+      if (throwOnBeginCall) {
+        throw new Error('sql.begin should not be called in this test');
+      }
+
       record('swap-begin');
       insideTransaction = true;
 
@@ -1417,6 +1438,31 @@ test('publishCourseDbPostgres runs the expected happy-path workflow when bootstr
     assert.ok(finalCleanupIndex > swapIndexes.at(-1));
     assert.ok(finalCleanupIndex < recorder.events.indexOf('end'));
     assert.ok(recorder.events.at(-1) === 'end');
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('publishCourseDbPostgres swap uses explicit transaction statements on the reserved client', async () => {
+  const { publishCourseDbPostgres } = await import(courseImporterPath);
+  const fixture = await createCourseSqliteFixture({ withRows: true });
+  const recorder = createPostgresRecorder({
+    schemaExistsRow: makeCourseSchemaExistsRow(),
+    throwOnBeginCall: true,
+  });
+
+  try {
+    await publishCourseDbPostgres({
+      env: {
+        SUPABASE_DATABASE_URL: 'postgres://example.test/db',
+      },
+      sqlitePath: fixture.sqlitePath,
+      sqlFactory: recorder.sqlFactory,
+    });
+
+    assert.ok(recorder.events.includes('swap-begin'));
+    assert.ok(recorder.events.includes('swap-truncate'));
+    assert.equal(recorder.events.at(-1), 'end');
   } finally {
     await fixture.cleanup();
   }

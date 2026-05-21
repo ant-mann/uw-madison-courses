@@ -247,18 +247,31 @@ function makeStageCountSql(sql) {
 function makeSwapSql(sql) {
   const truncateList = COURSE_SWAP_TRUNCATE_TABLES.map((tableName) => `public.${escapePostgresIdentifier(tableName)}`).join(', ');
 
-  return sql.begin(async (transactionSql) => {
-    await transactionSql.unsafe(`TRUNCATE TABLE ${truncateList}`);
+  return (async () => {
+    await sql.unsafe('BEGIN');
 
-    for (const tableName of COURSE_IMPORT_TABLES) {
-      await transactionSql`
-        INSERT INTO ${sqlIdentifier(transactionSql, qualifyPublicIdentifier(tableName))}
-        SELECT * FROM ${sqlIdentifier(transactionSql, qualifyPublicIdentifier(`${tableName}_staging`))}
-      `;
+    try {
+      await sql.unsafe(`TRUNCATE TABLE ${truncateList}`);
+
+      for (const tableName of COURSE_IMPORT_TABLES) {
+        await sql`
+          INSERT INTO ${sqlIdentifier(sql, qualifyPublicIdentifier(tableName))}
+          SELECT * FROM ${sqlIdentifier(sql, qualifyPublicIdentifier(`${tableName}_staging`))}
+        `;
+      }
+
+      await syncCourseIdentitySequences(sql);
+      await sql.unsafe('COMMIT');
+    } catch (error) {
+      try {
+        await sql.unsafe('ROLLBACK');
+      } catch {
+        // Preserve the original swap failure if rollback also fails.
+      }
+
+      throw error;
     }
-
-    await syncCourseIdentitySequences(transactionSql);
-  });
+  })();
 }
 
 export async function dropCourseStagingTables(sql) {
