@@ -35,12 +35,15 @@ jobs:
 
       - name: Publish to Supabase
         run: |
-          for attempt in 1 2 3; do
+          max_attempts=3
+          base_backoff_seconds=15
+
+          for attempt in $(seq 1 "$max_attempts"); do
             if pnpm run publish:course-db:postgres 2>&1 | tee /tmp/publish-course-db.log; then
               exit 0
             fi
 
-            if [ "$attempt" -eq 3 ]; then
+            if [ "$attempt" -eq "$max_attempts" ]; then
               exit 1
             fi
 
@@ -48,7 +51,7 @@ jobs:
               exit 1
             fi
 
-            sleep $((attempt * 15))
+            sleep $((attempt * base_backoff_seconds))
           done
         env:
           SUPABASE_DIRECT_DATABASE_URL: ${{ secrets.SUPABASE_DIRECT_DATABASE_URL }}
