@@ -35,6 +35,7 @@ jobs:
 
       - name: Publish to Supabase
         run: |
+          set -o pipefail
           max_attempts=3
           base_backoff_seconds=15
 
