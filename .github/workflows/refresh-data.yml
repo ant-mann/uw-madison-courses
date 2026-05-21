@@ -58,4 +58,4 @@ jobs:
         env:
           SUPABASE_DIRECT_DATABASE_URL: ${{ secrets.SUPABASE_DIRECT_DATABASE_URL }}
           SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
-          SQLITE_BATCH_SIZE: "100"
+          SQLITE_BATCH_SIZE: "250"
