@@ -473,11 +473,13 @@ function createPostgresRecorder({
       }
 
       if (query === 'COMMIT') {
+        record('swap-commit');
         insideTransaction = false;
         return Promise.resolve([]);
       }
 
       if (query === 'ROLLBACK') {
+        record('swap-rollback');
         insideTransaction = false;
         return Promise.resolve([]);
       }
@@ -1462,6 +1464,7 @@ test('publishCourseDbPostgres swap uses explicit transaction statements on the r
 
     assert.ok(recorder.events.includes('swap-begin'));
     assert.ok(recorder.events.includes('swap-truncate'));
+    assert.ok(recorder.events.includes('swap-commit'));
     assert.equal(recorder.events.at(-1), 'end');
   } finally {
     await fixture.cleanup();
